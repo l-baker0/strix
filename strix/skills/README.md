@@ -33,7 +33,7 @@ The skills are dynamically injected into the agent's system prompt, allowing it 
 | **`/frameworks`** | Specific testing methods for popular frameworks e.g. Django, Express, FastAPI, and Next.js |
 | **`/technologies`** | Specialized techniques for third-party services such as Supabase, Firebase, Auth0, and payment gateways |
 | **`/protocols`** | Protocol-specific testing patterns for GraphQL, WebSocket, OAuth, and other communication standards |
-| **`/tooling`** | Command-line playbooks for core sandbox tools (nmap, nuclei, httpx, ffuf, subfinder, naabu, katana, sqlmap) |
+| **`/tooling`** | Command-line playbooks for core sandbox tools (nmap, nuclei, httpx, ffuf, subfinder, naabu, katana, sqlmap, relate graph DB) |
 | **`/cloud`** | Cloud provider security testing for AWS, Azure, GCP, and Kubernetes environments |
 | **`/reconnaissance`** | Advanced information gathering and enumeration techniques for comprehensive attack surface mapping |
 | **`/custom`** | Community-contributed skills for specialized or industry-specific testing scenarios |
@@ -41,6 +41,8 @@ The skills are dynamically injected into the agent's system prompt, allowing it 
 Notable source-aware skills:
 - `source_aware_whitebox` (coordination): white-box orchestration playbook
 - `source_aware_sast` (custom): opengrep/AST/secrets/supply-chain static triage workflow
+- `relate_callgraph_ingest` (custom): opengrep rules + taint traces -> call graph loaded into a relate graph database, with Cypher triage queries
+- `relate_datalog` (custom): Datalog (Souffle or bundled stdlib evaluator) over exported relate facts for sanitizer-coverage, dead-code, and recursion questions Cypher cannot express
 - `dependency_cve_scanning` (custom): trivy-based SCA workflow for reporting known dependency CVEs via `create_dependency_report`
 - `npx_confusion` (custom): npx/npm exec/bunx fallback and adjacent package-runner identity confusion, with runner-specific registry and reporting gates
 - `semantic_confusion` (vulnerabilities): cross-boundary parser, normalization, and representation mismatch analysis
