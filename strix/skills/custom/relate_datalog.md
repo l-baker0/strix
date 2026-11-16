@@ -22,7 +22,7 @@ If a bounded Cypher query answers it, stay in Cypher; do not export for question
 
 ## Tooling
 
-- `souffle` is the engine if present (`command -v souffle`); it is not in the Strix image. Run: `souffle -F facts -D out prog.dl`.
+- `souffle` (2.5) is the engine. The x86_64 Strix image bundles it in interpreter mode (compiled `-o` mode is unavailable: no g++/headers guaranteed); aarch64 images do not, so check `command -v souffle`. Run: `souffle -F facts -D out prog.dl`. The programs below produce identical results under `souffle` and `minidl.py`.
 - Fallback: `minidl.py` below, a stdlib evaluator for a Souffle subset (`.decl/.input/.output`, rules, `!` negation with stratification, `=`/`!=`, string constants, `_`). Naive iteration per stratum: fine to ~100k edges. Same `.dl` file runs under both. Unsupported: `.type`, arithmetic, aggregates (`count`, `min`), functors, `.input` options. Unstratifiable negation exits with an error.
 - All values are `symbol`s (strings); fact files are tab-separated, one tuple per line, named `<relation>.facts`; outputs are `<relation>.csv` in the out dir. Function ids contain `::` and may contain `.`; they must not contain tabs or newlines (the converter output never does).
 

@@ -11,7 +11,7 @@ Docs index for agents: https://relatedb.ai/docs/llms.txt (full text: https://rel
 
 ## Strix sandbox notes
 
-- relate is NOT in the Strix image. Check `command -v relate` first. If missing, install with the signed installer (`curl -sSfL https://relatedb.ai/install.sh | bash`, writes `~/.local/bin/relate`, verifies SHA256SUMS signature) only when the task needs it and egress to `relatedb.ai` and `github.com` is allowed; otherwise fall back to files/jq/SQLite. Do not pipe unverified scripts from any other host.
+- relate (pinned release, see the Dockerfile) is installed at `/usr/local/bin/relate` with usage telemetry disabled (`RELATE_TELEMETRY=0`, `DO_NOT_TRACK=1`). Check `relate --version` first. If it is missing (older image), install with the signed installer (`curl -sSfL https://relatedb.ai/install.sh | bash`, writes `~/.local/bin/relate`) only if egress to `relatedb.ai` and `github.com` is allowed; otherwise fall back to files/jq/SQLite.
 - Keep stores under `/workspace/.source-aware/` (e.g. `cg.rl`), one `.rl` file per scan. One writer at a time; open with `--read-only` for every query that should not mutate.
 - Always pass `--mode jsonl` (or `--mode envelope`) and `--max-rows`/`LIMIT` when parsing output; agent mode otherwise defaults to TOON.
 - Load structured data with `--fetch-params name=file.json` + `UNWIND $name.rows AS r` (64 MiB cap, one JSON document, not JSON Lines). `LOAD CSV` works only for a directory enabled with `--load-csv-dir PATH`.

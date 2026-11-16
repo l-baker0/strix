@@ -238,6 +238,49 @@ RUN set -eux; \
     rm -f /tmp/opengrep; \
     opengrep --version
 
+# relate (relatedb.ai): embedded Cypher graph database used by the
+# relate_callgraph_ingest / relate_datalog skills. The SHA-256 values come from
+# the release SHA256SUMS (verify its signature with relate's pinned key); bump
+# them together with RELATE_VERSION. Usage telemetry is off in the sandbox.
+ARG RELATE_VERSION=1.0.2
+ARG RELATE_SHA256_AMD64=bcaf626708d8399dc33e4624a21f8ac5c096b247e9b0df554596be8d3667e4e4
+ARG RELATE_SHA256_ARM64=2eab8e4e754e497047891ef8e45f1431cd24d9799b1a8bc617a760e44fea60be
+RUN set -eux; \
+    case "$(uname -m)" in \
+        x86_64) RELATE_ARCH="amd64"; RELATE_SHA256="${RELATE_SHA256_AMD64}" ;; \
+        aarch64|arm64) RELATE_ARCH="arm64"; RELATE_SHA256="${RELATE_SHA256_ARM64}" ;; \
+        *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/relatedb/relate/releases/download/v${RELATE_VERSION}/relate-linux-${RELATE_ARCH}" -o /tmp/relate; \
+    echo "${RELATE_SHA256}  /tmp/relate" | sha256sum -c -; \
+    install -m 0755 /tmp/relate /usr/local/bin/relate; \
+    rm -f /tmp/relate; \
+    relate --version
+ENV RELATE_TELEMETRY=0 \
+    DO_NOT_TRACK=1
+
+# Souffle (Datalog) for the relate_datalog skill. Upstream publishes prebuilt
+# .deb files for x86_64 only, so aarch64 images omit it and the skill falls back
+# to its bundled Python evaluator. The package is unpacked rather than
+# dpkg-installed (its Depends names dev packages Kali may spell differently);
+# only the interpreter's runtime libraries are needed, compiled mode (-o) is
+# not supported here.
+ARG SOUFFLE_VERSION=2.5
+ARG SOUFFLE_SHA256_AMD64=c7e9dd1349506bbb23c4dcf89e87396198006235f79b1cc516c0a2b67ac067bc
+RUN set -eux; \
+    if [ "$(uname -m)" = "x86_64" ]; then \
+        apt-get update; \
+        apt-get install -y --no-install-recommends libffi8 libncurses6 libsqlite3-0 zlib1g libgomp1 mcpp; \
+        rm -rf /var/lib/apt/lists/*; \
+        curl -fsSL "https://github.com/souffle-lang/souffle/releases/download/${SOUFFLE_VERSION}/x86_64-ubuntu-2404-souffle-${SOUFFLE_VERSION}-Linux.deb" -o /tmp/souffle.deb; \
+        echo "${SOUFFLE_SHA256_AMD64}  /tmp/souffle.deb" | sha256sum -c -; \
+        dpkg-deb -x /tmp/souffle.deb /; \
+        rm -f /tmp/souffle.deb; \
+        souffle --version; \
+    else \
+        echo "souffle: no prebuilt package for $(uname -m); relate_datalog uses its Python fallback"; \
+    fi
+
 # Opengrep ships no rule registry of its own; bake the community ruleset so
 # scans run offline. Keep only rule YAML and LICENSE; drop tests, fixtures,
 # tooling, and rules marked with a proprietary license.

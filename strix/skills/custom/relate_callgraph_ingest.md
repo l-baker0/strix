@@ -318,7 +318,7 @@ MATCH ()-[c:CALLS]->() WITH functions, count(c) AS calls
 OPTIONAL MATCH (x:Flow) RETURN functions, calls, count(x) AS flows'
 ```
 
-The CLI prints no mutation summaries, so verify with the count query. If a statement is rejected, run `EXPLAIN <statement>` and read `Notifications:`; `relate agent-context` prints the exact flags of the installed binary (this file was written from the published docs, v1.0.1 skill, not against a live binary - trust `--help`).
+The CLI prints no mutation summaries, so verify with the count query. If a statement is rejected, run `EXPLAIN <statement>` and read `Notifications:`; `relate agent-context` prints the exact flags of the installed binary (the load statements, labels, and queries here were run against relate v1.0.2; trust `--help` if your binary differs).
 
 Entry points, sanitizers, and sinks are not in the graph yet. Label them from names, then keep labels in the store:
 
