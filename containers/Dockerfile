@@ -223,16 +223,16 @@ RUN set -eux; \
     test "$(dpkg-query -W -f='${Version}' libbrotli1)" = "${BROTLI_DEB_VERSION}"; \
     node -e 'const z=require("zlib");z.brotliDecompressSync(z.brotliCompressSync(Buffer.from("ok")))'
 
-ARG OPENGREP_VERSION=1.31.0
-ARG OPENGREP_SHA256_X86=dbbe3c2058dbe600c449a8ba22ea79a1643a6660658400090d0323a8d0d31147
-ARG OPENGREP_SHA256_AARCH64=2b713a29a00237f85408b83002fc111db5b94c7fa8d263f0a93184a960655d9d
+ARG OPENGREP_VERSION=2.0.0
+ARG OPENGREP_SHA256_X86=37e93f4da5fd04a18c5c1febbdd12f7e98dfccd4d0c9cf2593bcb25eeb462da0
+ARG OPENGREP_SHA256_AARCH64=6257b65423a744b704af2ff9beeb8f222c2f6925236af386b56b031d4c06d6d8
 RUN set -eux; \
     case "$(uname -m)" in \
         x86_64) OPENGREP_ARCH="x86"; OPENGREP_SHA256="${OPENGREP_SHA256_X86}" ;; \
         aarch64|arm64) OPENGREP_ARCH="aarch64"; OPENGREP_SHA256="${OPENGREP_SHA256_AARCH64}" ;; \
         *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL "https://github.com/opengrep/opengrep/releases/download/v${OPENGREP_VERSION}/opengrep_manylinux_${OPENGREP_ARCH}" -o /tmp/opengrep; \
+    curl -fsSL "https://github.com/opengrep/opengrep/releases/download/v${OPENGREP_VERSION}/opengrep_linux_${OPENGREP_ARCH}" -o /tmp/opengrep; \
     echo "${OPENGREP_SHA256}  /tmp/opengrep" | sha256sum -c -; \
     install -m 0755 /tmp/opengrep /usr/local/bin/opengrep; \
     rm -f /tmp/opengrep; \

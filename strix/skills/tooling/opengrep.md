@@ -19,6 +19,9 @@ Bundled rules:
 High-signal flags:
 - `--config <path>` rule file or directory; repeat for several
 - `--taint-intrafile` intra-file inter-procedural taint (follows data across functions in one file)
+- `--enable-interfile` (Opengrep >= 2.0) cross-file taint. It applies ONLY to taint rules whose `options:` set `interfile: true` (or `taint_interfile`); other rules run as if the option were absent. Companion files are found through a project-wide call graph and analysed together. Implies intrafile behaviour for those rules
+- `--interfile-depth <n>` max call-chain depth for companion-file discovery (default 3); `--interfile-timeout <s>` per-rule interfile budget (default 0 = none); `--interfile-dedup-by sink|source-sink` (default `sink`); `--max-memory <MiB>` cap during interfile analysis
+- `--dataflow-traces` include `extra.dataflow_trace` in JSON (2.x: list of `{kind, location, content, children}` nodes with kinds `source`, `through`, `through_call`, `sink_in_call`, `parameter`, `return`, `sink`; 1.x: `taint_source`/`intermediate_vars`/`taint_sink`)
 - `--json` / `--sarif` output format
 - `--output <file>` write findings to file
 - `--severity <level>` filter by severity (`INFO`, `WARNING`, `ERROR`)
@@ -32,6 +35,15 @@ High-signal flags:
 
 Agent-safe baseline for automation:
 `opengrep scan --config /opt/opengrep-rules --taint-intrafile --json --output opengrep.json --quiet --jobs 4 --timeout 20 /workspace`
+
+Cross-file taint (Opengrep 2.x):
+`opengrep scan --config ./rules/my-taint.yaml --enable-interfile --dataflow-traces --json --output opengrep_interfile.json --quiet --jobs 4 --timeout 20 /workspace`
+with the rule carrying:
+```yaml
+options:
+  interfile: true
+```
+Bundled `/opt/opengrep-rules` rules do not generally set it; copy the relevant taint rule, add the option, and confirm with a two-file case that the finding is reported in the sink file. A rule without the option gives identical results with or without the flag.
 
 Common patterns:
 - Full bundled scan:
@@ -55,7 +67,7 @@ Critical correctness rules:
 
 Usage rules:
 - Start with the full `/opt/opengrep-rules` set unless the task clearly calls for a narrower language or framework directory.
-- Add `--taint-intrafile` for injection-class hunting (SQLi, command injection, SSRF, path traversal) in supported languages.
+- Add `--taint-intrafile` (and, for rules with `options: interfile: true`, `--enable-interfile`) for injection-class hunting (SQLi, command injection, SSRF, path traversal) in supported languages.
 - Use `--quiet` in automation to reduce noisy logs.
 - Use `--jobs` and `--timeout` explicitly for reproducible runtime behavior.
 - `PartialParsing` errors on templates are normal; they do not invalidate the run.
