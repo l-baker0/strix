@@ -1,5 +1,5 @@
 ---
-name: relate_datalog
+name: relate-datalog
 description: Datalog (Souffle or a bundled stdlib evaluator) over facts exported from the opengrep-ingested relate call graph, for questions Cypher cannot answer well - sanitizer-on-every-path, dead code, mutual recursion, unguarded sinks, flow triage by entry reachability. Results are written back to relate.
 ---
 

@@ -1,5 +1,5 @@
 ---
-name: relate_callgraph_ingest
+name: relate-callgraph-ingest
 description: Build a call graph from opengrep output and load it into a relate graph database - custom call/def rules, taint dataflow traces as flow edges, JSON-to-relate loader, and Cypher for callers, reachability, and source-to-sink paths. Use for source-aware (white-box) review that needs structural questions answered.
 ---
 

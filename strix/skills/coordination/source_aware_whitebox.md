@@ -27,6 +27,7 @@ Increase white-box coverage by combining source-aware triage with dynamic valida
 - `tree-sitter`: syntax-aware parsing support for symbol and route extraction
 - `gitleaks` + `trufflehog`: complementary secret detection (working tree and history coverage)
 - `trivy fs`: dependency, misconfiguration, license, and secret checks
+- `relate` (+ `souffle`): optional code graph from opengrep output for call-chain, reachability, and sanitizer-coverage queries (skills `relate_callgraph_ingest`, `relate_datalog`)
 
 Coverage target per repository:
 - one `opengrep` pass
@@ -38,6 +39,8 @@ Coverage target per repository:
 
 - Keep child agents specialized by vulnerability/component as usual.
 - For source-heavy subtasks, prefer creating child agents with `source_aware_sast` skill.
+- For structural questions (who calls X, which entry points reach this sink, is every path sanitized, dead code), create a child agent with `relate_callgraph_ingest` (build the opengrep call graph in a relate store and query it with Cypher). Add `relate_datalog` when the question needs fixpoint logic Cypher cannot express (sanitizer on every path, mutual recursion, unreachable code). Add `relate` for CLI details. Cross-file taint needs Opengrep >= 2.0 `--enable-interfile` with rules that set `options: interfile: true`.
+- Graph results are triage leads: confirm in source and dynamically before reporting.
 - Use source findings to shape payloads and endpoint selection for dynamic testing.
 
 ## Validation Guardrails
