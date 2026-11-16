@@ -181,7 +181,7 @@ step to mine those bundles for endpoint candidates.
 
 When source contains model-provider SDKs, prompt templates, retrieval/vector stores, tool/function calling, model loading, training/feedback pipelines, or token/agent-loop accounting, load `llm_applications`. Use its OWASP 2026 LLM01-LLM10 map to trace data provenance, model output, retrieval authorization, tool authority, and resource multipliers rather than treating the provider call as the sink.
 
-When the question is structural (callers of a function, entry-point-to-sink chains, whether every path crosses a sanitizer, dead code), load `relate_callgraph_ingest` to turn the opengrep output into a queryable call graph (cross-file taint needs Opengrep >= 2.0 `--enable-interfile`), and `relate_datalog` for fixpoint queries Cypher cannot express. Use `relate` for CLI details.
+When the question is structural (callers of a function, entry-point-to-sink chains, whether every path crosses a sanitizer, dead code), load `building_code_call_graphs` to turn the opengrep output into a queryable call graph (cross-file taint needs Opengrep >= 2.0 `--enable-interfile`), and `analyzing_call_graphs_with_datalog` for fixpoint queries Cypher cannot express. Use `querying_relate_graphs` for CLI details.
 
 1. Rank candidates by impact and exploitability.
 2. Trace source-to-sink flow for top candidates.

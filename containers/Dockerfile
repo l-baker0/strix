@@ -239,7 +239,7 @@ RUN set -eux; \
     opengrep --version
 
 # relate (relatedb.ai): embedded Cypher graph database used by the
-# relate_callgraph_ingest / relate_datalog skills. The SHA-256 values come from
+# building_code_call_graphs / analyzing_call_graphs_with_datalog skills. The SHA-256 values come from
 # the release SHA256SUMS (verify its signature with relate's pinned key); bump
 # them together with RELATE_VERSION. Usage telemetry is off in the sandbox.
 ARG RELATE_VERSION=1.0.2
@@ -259,7 +259,7 @@ RUN set -eux; \
 ENV RELATE_TELEMETRY=0 \
     DO_NOT_TRACK=1
 
-# Souffle (Datalog) for the relate_datalog skill. Upstream publishes prebuilt
+# Souffle (Datalog) for the analyzing_call_graphs_with_datalog skill. Upstream publishes prebuilt
 # .deb files for x86_64 only, so aarch64 images omit it and the skill falls back
 # to its bundled Python evaluator. The package is unpacked rather than
 # dpkg-installed (its Depends names dev packages Kali may spell differently);
@@ -278,7 +278,7 @@ RUN set -eux; \
         rm -f /tmp/souffle.deb; \
         souffle --version; \
     else \
-        echo "souffle: no prebuilt package for $(uname -m); relate_datalog uses its Python fallback"; \
+        echo "souffle: no prebuilt package for $(uname -m); analyzing_call_graphs_with_datalog uses its Python fallback"; \
     fi
 
 # Opengrep ships no rule registry of its own; bake the community ruleset so

@@ -1,11 +1,11 @@
 ---
-name: relate-callgraph-ingest
-description: Build a call graph from opengrep output and load it into a relate graph database - custom call/def rules, taint dataflow traces as flow edges, JSON-to-relate loader, and Cypher for callers, reachability, and source-to-sink paths. Use for source-aware (white-box) review that needs structural questions answered.
+name: building-code-call-graphs
+description: Builds a function call graph from opengrep scan output (custom definition and call rules plus taint dataflow traces, cross-file with Opengrep 2.x --enable-interfile) and loads it into a relate database for Cypher queries. Use in white-box review to answer who calls a function, which entry points reach a sink, or how tainted data moves between functions.
 ---
 
 # opengrep -> relate call graph
 
-Use with `source_aware_sast` (scanning) and `relate` (database usage). Query the result with Cypher here; for fixpoint questions Cypher cannot express, load `relate_datalog`.
+Use with `source_aware_sast` (scanning) and `querying_relate_graphs` (database usage). Query the result with Cypher here; for fixpoint questions Cypher cannot express, load `analyzing_call_graphs_with_datalog`.
 
 ## What this is, and its limits
 
@@ -156,11 +156,11 @@ Check on a two-file example first: the finding is reported in the sink file, and
 Stdlib only. Run with `python3 -I`. Output keys: `functions`, `calls`, `flows` (function id is `<path>::<name>`; `<path>::<module>` stands for top-level code; `ext::...` for unresolved callees).
 
 ```bash
-cat > "$ART/og2relate.py" <<'PY'
+cat > "$ART/build_graph_json.py" <<'PY'
 #!/usr/bin/env python3
 """Turn opengrep (1.x or 2.x) JSON (call-graph rules + optional taint findings) into one
 relate-loadable JSON document: {"functions":[...],"calls":[...],"flows":[...]}.
-Usage: og2relate.py cg.json [taint.json ...] > graph.json   (stdlib only)"""
+Usage: build_graph_json.py cg.json [taint.json ...] > graph.json   (stdlib only)"""
 import json, sys
 from collections import defaultdict
 
@@ -277,7 +277,7 @@ for a, b, line, path in sorted(taint_calls):
 json.dump({"functions": list(funcs.values()), "calls": out_calls, "flows": out_flows},
           sys.stdout, indent=1)
 PY
-python3 -I "$ART/og2relate.py" "$ART/cg.json" "$ART/taint.json" > "$ART/graph.json"
+python3 -I "$ART/build_graph_json.py" "$ART/cg.json" "$ART/taint.json" > "$ART/graph.json"
 python3 -I -c "import json,sys;d=json.load(open(sys.argv[1]));print({k:len(v) for k,v in d.items()})" "$ART/graph.json"
 ```
 
@@ -370,7 +370,7 @@ MATCH (:Function)-[r:CALLS]->(t:Function {external: true})
 RETURN t.name, count(r) AS n ORDER BY n DESC LIMIT 30
 ```
 
-Cypher path enumeration returns paths, grows combinatorially on cyclic graphs, and the explicit-bound cap is 500 hops. For "every path", "no path", "mutual recursion", or reachability sets over the whole graph, use `relate_datalog`.
+Cypher path enumeration returns paths, grows combinatorially on cyclic graphs, and the explicit-bound cap is 500 hops. For "every path", "no path", "mutual recursion", or reachability sets over the whole graph, use `analyzing_call_graphs_with_datalog`.
 
 ## Validation and reporting
 
