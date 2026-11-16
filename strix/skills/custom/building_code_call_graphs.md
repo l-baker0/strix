@@ -122,6 +122,8 @@ rules:
 YAML
 ```
 
+Scope scans to first-party source (`--include '*.py'`, `--exclude node_modules --exclude '*.min.js'`): vendored or minified files add thousands of meaningless nodes.
+
 ## Step 2 - scan
 
 ```bash
@@ -331,6 +333,8 @@ MATCH (f:Function) WHERE f.name =~ $sink SET f:Sink;' \
   --param san='(?i).*(sanitize|escape|validate).*' \
   --param sink='(?i)^(os\.system|exec|query|execute|eval)$'
 ```
+
+For web apps, derive entries from a framework rule instead of names, e.g. a rule matching `@$APP.route(...)` / `@$APP.errorhandler(...)` on `def $F(...)`, then label `f.name IN $entries` (`--param entries='["login","search"]'`). Error handlers are entry points too.
 
 Regex on names over-matches; review `MATCH (f:Entry) RETURN f.id LIMIT 50` before relying on it. Prefer deriving entries from framework route rules (opengrep matches on `@app.route`, `router.get(...)`) when available.
 

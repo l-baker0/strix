@@ -219,7 +219,9 @@ It prints a row count per relation and flags `EMPTY` for `fn`, `entry`, or `sink
 
 ## Step 2 - program: reachability and exposure
 
-Writes derived relations: `exposed(entry,sink)` sink reachable on at least one sanitizer-free path; `always_sanitized(entry,sink)` reachable but every path crosses a sanitizer; `dead(f)`; `recursive(f)`; `unguarded_sink(entry,sink)` reachable avoiding every `:Guard`.
+Writes derived relations: `exposed(entry,sink)` sink reachable on at least one sanitizer-free path; `always_sanitized(entry,sink)` reachable but every path crosses a sanitizer; `dead(f)`; `recursive(f)`; `unchecked_sink(entry,sink)` sink reachable from an entry that never calls a `:Guard` (e.g. an auth check like `verify_jwt`); `unguarded_sink(entry,sink)` sink reachable on a call path that avoids every `:Guard` node.
+
+Pick the guard relation by how the guard is used. `unguarded_sink` only makes sense when the guard sits ON the call path (a wrapper or middleware that calls the handler). When handlers call the check themselves (`if not verify_jwt(token): return 403`), the guard is a sibling call, not on the path to the sink, so `unguarded_sink` flags every handler; use `unchecked_sink`. Neither proves the guard dominates the sink: the graph has no control flow, so confirm in source.
 
 ```bash
 cat > "$ART/dl/reach.dl" <<'DL'
@@ -271,6 +273,15 @@ reach_unguarded(E,G) :- reach_unguarded(E,F), call(F,G), !guard(G).
 .decl unguarded_sink(e:symbol,s:symbol)
 unguarded_sink(E,S) :- reach_unguarded(E,S), sink(S).
 .output unguarded_sink
+
+// Function-level auth check: an entry that directly calls a guard (e.g. verify_jwt(token)).
+// Approximation: the call graph has no control flow, so this cannot prove the guard
+// dominates the sink; it flags entries that never check at all.
+.decl checks_guard(e:symbol)
+checks_guard(E) :- entry(E), call(E,G), guard(G).
+.decl unchecked_sink(e:symbol,s:symbol)
+unchecked_sink(E,S) :- entry(E), !checks_guard(E), reach(E,S), sink(S).
+.output unchecked_sink
 DL
 ```
 
@@ -345,6 +356,15 @@ Then query with Cypher, e.g. `MATCH (e:Entry)-[:EXPOSED_TO]->(s:Sink) RETURN e.i
 - Negation must be stratifiable (`!r(X)` only on relations fully computed earlier) and every variable in a negated or `!=` literal must also appear in a positive literal of the same rule.
 - Typical additions: sources/sinks by file (`sink_in(F,Path)`), tainted-callee summaries (`passes_taint(F)` over `flow`), "reachable only through test code" (`test_fn` facts from path regexes), and entry-to-flow joins keyed on `:Flow` keys.
 - Sanity-test a new program on a 5-node hand-made fact set (a cycle, a sanitized path, an unsanitized path, an unreachable node) before trusting it on the repo.
+
+## Worked example (real project)
+
+Target: `we45/Vulnerable-Flask-App` (intentionally vulnerable, single `app.py`, commit `b6a4f97`). Scan only the app's Python (`--include '*.py'`): vendored minified JS otherwise adds ~1,500 meaningless functions. Entries came from an opengrep rule on `@app.route`/`@app.errorhandler` decorators, guard `verify_jwt`, sinks `db.engine.execute`, `yaml.load`, `render_template_string`, `Document`. Graph: 101 functions, 154 call edges, 12 entries.
+
+- `exposed` listed five entry/sink pairs: `search_customer` -> `db.engine.execute` (SQL injection via string formatting) and `render_template_string` (SSTI), `pnf` -> `render_template_string` (SSTI in the 404 handler), `yaml_hammer` -> `yaml.load` (unsafe deserialization), `hello` -> `Document` (uploaded docx parsing).
+- `unchecked_sink` kept only the three reachable without any `verify_jwt` call: `hello`, `pnf`, `yaml_hammer`. `search_customer` is authenticated, so it drops out. These three match the unauthenticated bugs found by reading the code.
+- `unguarded_sink` (the path-based rule) wrongly kept `search_customer`; that is why `unchecked_sink` exists.
+- The same three pairs also come from a bounded Cypher query (`WHERE NOT (e)-[:CALLS]->(:Guard) AND EXISTS { (e)-[:CALLS*1..10]->(s) }`), and Souffle and `datalog_eval.py` agree. Datalog earns its place when such answers must be combined (sanitizer coverage, dead code, flows by reachability), not for this single join.
 
 ## Interpreting results
 
