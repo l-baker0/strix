@@ -52,6 +52,7 @@ from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.sessions import open_agent_session
 from strix.report.state import get_global_report_state
 from strix.runtime import session_manager
+from strix.runtime.code_graph import prepare_code_graphs
 from strix.telemetry import set_scan_phase
 from strix.telemetry.logging import set_scan_id, setup_scan_logging
 from strix.tools.finish.tool import finish_scan
@@ -455,6 +456,14 @@ async def run_strix_scan(
             coordinator.set_budget_extender(hooks.extend_budget)
 
         scope_context = build_scope_context(scan_config)
+
+        # Whether mounted source is graph-backed is decided here, by Strix, at sandbox start
+        # (STRIX_CODE_GRAPH: auto | on | off). Agents are told about a graph only when one is
+        # ready; black-box runs (off, or no mounted source) and failed builds look identical.
+        if is_whitebox:
+            code_graph = await prepare_code_graphs(sandbox_session, local_sources)
+            if code_graph["ready"]:
+                scope_context["code_graph"] = code_graph
 
         # Attach the run's MCP connections and hold their live sessions in a
         # per-run registry. The connections are source-agnostic: a caller

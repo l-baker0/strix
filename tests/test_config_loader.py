@@ -35,6 +35,11 @@ _LLM_ENV_KEYS = [
     # RuntimeSettings
     "STRIX_IMAGE",
     "STRIX_RUNTIME_BACKEND",
+    # CodeGraphSettings
+    "STRIX_CODE_GRAPH",
+    "STRIX_CODE_GRAPH_TIMEOUT",
+    "STRIX_CODE_GRAPH_MIN_FILES",
+    "STRIX_CODE_GRAPH_MIN_LOC",
     # TelemetrySettings
     "STRIX_TELEMETRY",
     # JSON-object settings

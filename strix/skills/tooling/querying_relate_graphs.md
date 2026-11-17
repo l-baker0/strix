@@ -45,7 +45,7 @@ Common patterns:
 Cypher notes (openCypher plus Cypher 25 extensions):
 - Variable length `-[:T*1..5]->`, `shortestPath(...)`, `allShortestPaths(...)`, path selectors (`SHORTEST 1`, `ANY`, `TRAIL`), quantified path patterns; explicit bounds above 500 hops fail with `TraversalDepthExceeded`, unbounded `*` is exempt
 - `MERGE` for idempotent loads, `UNWIND`, `CALL { }` subqueries, `EXISTS`/`COUNT`/`COLLECT` subqueries, `GROUP BY`, vector and full-text `SEARCH`
-- No Datalog and no recursive CTEs; for fixpoint questions use `analyzing_call_graphs_with_datalog`
+- No Datalog and no recursive CTEs; for fixpoint questions see the Custom Datalog section of `querying_code_graph`
 
 Critical correctness rules:
 - Use `$parameters` for values, never string-interpolated literals.
@@ -62,7 +62,7 @@ Failure recovery:
 - Store locked (exit 5): another process is writing; open with `--read-only` or wait.
 - Slow query: `EXPLAIN`, add the suggested index, bound the expansion.
 
-Related skills: `building_code_call_graphs` (opengrep output -> relate call graph), `analyzing_call_graphs_with_datalog` (Souffle queries over exported facts).
+Related skill: `querying_code_graph` (the call graph Strix builds for mounted source).
 
 If uncertain, read https://relatedb.ai/docs/llms.txt and fetch the specific page, or query web_search with:
 `site:relatedb.ai <topic>`

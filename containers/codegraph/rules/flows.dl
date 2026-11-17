@@ -1,0 +1,25 @@
+// Flow triage: combine taint findings with call-graph reachability.
+.decl fn(f:symbol)            .input fn
+.decl call(a:symbol,b:symbol) .input call
+.decl entry(f:symbol)         .input entry
+.decl sanitizer(f:symbol)     .input sanitizer
+.decl flow(k:symbol,src:symbol,snk:symbol) .input flow   // key, source fn, sink fn
+
+.decl reach_any(e:symbol,f:symbol)       // reachable from entry, sanitizers allowed
+reach_any(E,E) :- entry(E).
+reach_any(E,G) :- reach_any(E,F), call(F,G).
+
+.decl reach_clean(e:symbol,f:symbol)     // reachable without crossing a sanitizer
+reach_clean(E,E) :- entry(E), !sanitizer(E).
+reach_clean(E,G) :- reach_clean(E,F), call(F,G), !sanitizer(G).
+
+.decl flow_live(k:symbol,e:symbol)       // flow's source function is reachable from entry e
+flow_live(K,E) :- flow(K,S,_), reach_any(E,S).
+
+.decl flow_open(k:symbol,e:symbol)       // ...and the sink is reachable sanitizer-free from e
+flow_open(K,E) :- flow_live(K,E), flow(K,_,T), reach_clean(E,T).
+.output flow_open
+
+.decl flow_dead(k:symbol)                // no entry reaches the source function: low priority
+flow_dead(K) :- flow(K,_,_), !flow_live(K,_).
+.output flow_dead

@@ -1,0 +1,521 @@
+#!/usr/bin/env python3
+"""strix-codegraph: build and query-prepare a call graph for a source tree.
+
+Runs inside the Strix sandbox image, started by the Strix runner (not by the agent).
+
+    strix-codegraph build  --source DIR --out DIR [--policy auto|on]
+    strix-codegraph datalog --db FILE --program FILE.dl --out DIR
+
+`build` is gated: with --policy auto it only builds when the tree is big enough to
+justify a graph (provisional thresholds, env-overridable). It always writes
+OUT/status.json and prints that JSON as the last stdout line; it never exits non-zero
+for a skipped or failed build, so a scan can always continue without the graph.
+
+Pipeline: opengrep definition/call/entry rules -> function and call graph; optional
+taint findings (cross-file with Opengrep >= 2.0) -> flow nodes; load into a relate
+store (OUT/cg.rl); label entries/sanitizers/sinks/guards; run Datalog (Souffle, else the
+bundled evaluator) and store the derived relations back as edges and labels.
+"""
+
+import argparse
+import csv
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from collections import defaultdict
+from pathlib import Path
+
+HOME = Path(__file__).resolve().parent
+RULES = HOME / "rules"
+EXTS = {".py": "python", ".js": "javascript", ".jsx": "javascript", ".ts": "typescript",
+        ".tsx": "typescript", ".go": "go", ".java": "java"}
+EXCLUDE_DIRS = {".git", "node_modules", "vendor", "dist", "build", "target", "third_party",
+                "site-packages", "__pycache__", ".venv", "venv", "bower_components", "static"}
+MAX_FILE_BYTES = 1_000_000
+
+# Role heuristics (regexes on function / callee names). Provisional; override with --roles.
+ROLE_PATTERNS = {
+    "sanitizer": r"(?i)(sanitiz|escape|quote_?(sql|ident)|encode_?html|bleach|parameteri[sz]e|secure_filename|html_?escape)",
+    "guard": r"(?i)^(verify|check|require|authenticate|authorize|validate)_?(jwt|token|auth|session|permission|access|user|login|admin|role)\w*$|^login_required$|^(is_)?authenticated$",
+    "sink": r"(?i)(^|\.)(execute|executemany|executescript|raw|exec|eval|system|popen|spawn|check_output|check_call|run|call|"
+            r"load|loads|loadall|unsafe_load|render_template_string|innerhtml|deserialize|readobject|createquery|"
+            r"send_file|send_from_directory|urlopen|request|get|post|fetch|open|unlink|rmtree|write)$",
+}
+# 'sink' above is deliberately name-based and broad on method names; narrow it with --roles
+# or by labeling in the store. Sinks are only taken from external callees (library calls).
+SINK_QUALIFIED = re.compile(
+    r"(?i)(os\.system|os\.popen|subprocess\.\w+|eval|exec|yaml\.(load|unsafe_load)|pickle\.loads?|"
+    r"marshal\.loads?|render_template_string|\.execute|\.executemany|engine\.execute|cursor\.execute|"
+    r"Runtime\.getRuntime\(\)\.exec|ProcessBuilder|createQuery|createNativeQuery|readObject|"
+    r"child_process\.\w+|\.innerHTML|document\.write|new Function|vm\.run\w+|Document|"
+    r"send_file|send_from_directory|urlopen|requests\.(get|post)|http\.Get|sql\.Query|db\.Exec)")
+
+
+def log(msg):
+    print(f"strix-codegraph: {msg}", file=sys.stderr)
+
+
+def run(cmd, timeout, **kw):
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False, **kw)
+
+
+# ---------------------------------------------------------------- gate
+
+def survey(src: Path):
+    files, loc, langs = 0, 0, defaultdict(int)
+    for root, dirs, names in os.walk(src):
+        dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
+        for n in names:
+            p = Path(root) / n
+            lang = EXTS.get(p.suffix)
+            if not lang or n.endswith((".min.js", ".bundle.js")):
+                continue
+            try:
+                if p.stat().st_size > MAX_FILE_BYTES:
+                    continue
+                with open(p, "rb") as f:
+                    lines = sum(1 for _ in f)
+            except OSError:
+                continue
+            files += 1
+            loc += lines
+            langs[lang] += 1
+    return files, loc, dict(langs)
+
+
+def env_int(name, default):
+    try:
+        return int(os.environ.get(name, default))
+    except ValueError:
+        return default
+
+
+def gate(policy, files, loc, min_files=None, min_loc=None):
+    min_files = min_files or env_int("STRIX_CODE_GRAPH_MIN_FILES", 40)
+    min_loc = min_loc or env_int("STRIX_CODE_GRAPH_MIN_LOC", 8000)
+    if files == 0:
+        return False, "no supported source files (python, js/ts, go, java)"
+    if policy == "on":
+        return True, "forced on"
+    if files < min_files or loc < min_loc:
+        return False, (f"below complexity threshold ({files} files < {min_files} or "
+                       f"{loc} LOC < {min_loc}); read the source directly")
+    return True, f"{files} files, {loc} LOC"
+
+
+# ---------------------------------------------------------------- scanning
+
+def opengrep_version():
+    try:
+        out = run(["opengrep", "--version"], 30).stdout.strip().split()[0]
+        return out, int(out.split(".")[0])
+    except Exception:
+        return None, 0
+
+
+def scan(configs, target, out_json, *, taint, major, timeout):
+    cmd = ["opengrep", "scan", "--json", "--quiet", "--output", str(out_json),
+           "--jobs", "4", "--timeout", "20"]
+    for c in configs:
+        cmd += ["--config", str(c)]
+    for d in sorted(EXCLUDE_DIRS):
+        cmd += ["--exclude", d]
+    cmd += ["--exclude", "*.min.js"]
+    for ext in EXTS:
+        cmd += ["--include", f"*{ext}"]
+    if taint:
+        cmd += ["--taint-intrafile", "--dataflow-traces"]
+        if major >= 2:
+            cmd += ["--enable-interfile"]
+    cmd.append(str(target))
+    try:
+        proc = run(cmd, timeout)
+    except subprocess.TimeoutExpired:
+        return None, "timeout"
+    if not out_json.exists():
+        return None, (proc.stderr.strip() or "no output")[-300:]
+    return json.loads(out_json.read_text(encoding="utf-8")), None
+
+
+# ---------------------------------------------------------------- graph
+
+def steps(t):
+    """Normalize dataflow_trace (opengrep 2.x list of nodes, or 1.x dict) to tuples."""
+    out = []
+    if isinstance(t, list):
+        def walk(nodes, depth):
+            for n in nodes:
+                loc = n["location"]
+                out.append((n["kind"], loc["path"], loc["start"]["line"], n.get("content", ""), depth))
+                walk(n.get("children", []), depth + 1)
+        walk(t, 0)
+        return out
+    src = t.get("taint_source")
+    if src and src[0] == "CliLoc":
+        out.append(("source", src[1][0]["path"], src[1][0]["start"]["line"], src[1][1], 0))
+    for v in t.get("intermediate_vars", []):
+        loc = v["location"]
+        out.append(("through", loc["path"], loc["start"]["line"], v["content"], 0))
+    snk = t.get("taint_sink")
+    if snk and snk[0] == "CliLoc":
+        out.append(("sink", snk[1][0]["path"], snk[1][0]["start"]["line"], snk[1][1], 0))
+    return out
+
+
+def build_graph(cg, taint, src: Path):
+    rel = lambda p: os.path.relpath(p, src) if os.path.isabs(p) or p.startswith(str(src)) else p
+    defs, calls, entries, flows = defaultdict(list), set(), set(), []
+    for res in (cg or {}).get("results", []):
+        cid, e = res["check_id"].rsplit(".", 1)[-1], res["extra"]
+        path, s, en = rel(res["path"]), res["start"]["line"], res["end"]["line"]
+        mv = {k: v["abstract_content"] for k, v in e.get("metavars", {}).items()}
+        if cid.startswith("cg-def-") and "$F" in mv:
+            defs[path].append((s, en, mv["$F"]))
+        elif cid.startswith("cg-entry-") and "$F" in mv:
+            entries.add((path, mv["$F"]))
+        elif cid.startswith("cg-call-") and "$F" in mv and "." not in mv["$F"]:
+            calls.add((path, s, mv["$F"], mv["$F"]))
+        elif cid.startswith("cg-method-") and "$F" in mv and "$O" in mv and mv["$O"] != mv["$F"]:
+            calls.add((path, s, mv["$F"], mv["$O"] + "." + mv["$F"]))
+    for res in (taint or {}).get("results", []):
+        if "dataflow_trace" in res["extra"]:
+            flows.append(res)
+
+    def enclosing(path, line):
+        best = None
+        for s, en, n in defs[path]:
+            if s <= line <= en and (best is None or en - s < best[1] - best[0]):
+                best = (s, en, n)
+        return best[2] if best else "<module>"
+
+    fid = lambda path, name: f"{path}::{name}"
+    funcs = {fid(p, n): {"id": fid(p, n), "name": n, "path": p, "start_line": s, "end_line": en}
+             for p, d in defs.items() for s, en, n in d}
+    by_name = defaultdict(list)
+    for f in list(funcs.values()):
+        by_name[f["name"]].append(f["id"])
+
+    def ensure(path, name):
+        funcs.setdefault(fid(path, name), {"id": fid(path, name), "name": name, "path": path,
+                                           "start_line": None, "end_line": None})
+        return fid(path, name)
+
+    out_calls, seen, ambiguous, unresolved, internal = [], set(), 0, 0, 0
+    for path, line, name, raw in sorted(calls):
+        caller = ensure(path, enclosing(path, line))
+        internal += bool(by_name[name])
+        if fid(path, name) in funcs:
+            tgt = fid(path, name)
+        elif len(by_name[name]) == 1:
+            tgt = by_name[name][0]
+        else:
+            tgt = None
+            ambiguous += len(by_name[name]) > 1
+        if tgt is None:
+            unresolved += 1
+            funcs.setdefault("ext::" + raw, {"id": "ext::" + raw, "name": raw, "path": None,
+                                             "start_line": None, "end_line": None, "external": True})
+            tgt = "ext::" + raw
+        key = (caller, tgt, line)
+        if key not in seen:
+            seen.add(key)
+            out_calls.append({"src": caller, "dst": tgt, "line": line, "path": path})
+
+    out_flows, taint_calls = [], set()
+    for res in flows:
+        st = steps(res["extra"]["dataflow_trace"])
+        src_n = next((x for x in st if x[0] == "source"), None)
+        snk_n = next((x for x in st if x[0] == "sink"), None) or ("sink", rel(res["path"]), res["start"]["line"], "", 0)
+        if src_n is None:
+            continue
+        for idx, (k, path, line, _txt, d) in enumerate(st):
+            path = rel(path)
+            if k.endswith("_call") and idx + 1 < len(st) and st[idx + 1][4] == d + 1:
+                n = st[idx + 1]
+                a = ensure(path, enclosing(path, line))
+                b = ensure(rel(n[1]), enclosing(rel(n[1]), n[2]))
+                if a != b:
+                    taint_calls.add((a, b, line, path))
+        sp, sl, kp, kl = rel(src_n[1]), src_n[2], rel(snk_n[1]), snk_n[2]
+        ensure(sp, enclosing(sp, sl))
+        ensure(kp, enclosing(kp, kl))
+        out_flows.append({"rule": res["check_id"].rsplit(".", 1)[-1],
+                          "severity": res["extra"].get("severity"), "path": kp, "source_path": sp,
+                          "source_line": sl, "source": src_n[3], "sink_line": kl,
+                          "sink": res["extra"].get("lines", "").strip(),
+                          "source_fn": enclosing(sp, sl), "sink_fn": enclosing(kp, kl)})
+    for a, b, line, path in sorted(taint_calls):
+        out_calls.append({"src": a, "dst": b, "line": line, "path": path, "taint": True})
+
+    # roles
+    entry_ids = {fid(p, n) for p, n in entries}
+    pats = {k: re.compile(v) for k, v in ROLE_PATTERNS.items() if k != "sink"}
+    for f in funcs.values():
+        f["entry"] = f["id"] in entry_ids
+        f["sanitizer"] = bool(pats["sanitizer"].search(f["name"]))
+        f["guard"] = bool(pats["guard"].match(f["name"]))
+        f["sink"] = bool(f.get("external") and SINK_QUALIFIED.search(f["name"]))
+    stats = {"entries_from_rules": len(entry_ids), "ambiguous_calls": ambiguous,
+             "unresolved_calls": unresolved, "call_sites": len(calls),
+             "repo_named_call_sites": internal}
+    return {"functions": list(funcs.values()), "calls": out_calls, "flows": out_flows}, stats
+
+
+def apply_roles_file(graph, roles_path):
+    """Optional JSON {"entry": regex, "sanitizer": regex, "sink": regex, "guard": regex} on names."""
+    roles = json.loads(Path(roles_path).read_text(encoding="utf-8"))
+    for role, rx in roles.items():
+        if role in ("entry", "sanitizer", "sink", "guard"):
+            pat = re.compile(rx)
+            for f in graph["functions"]:
+                if pat.search(f["name"]):
+                    f[role] = True
+
+
+def name_fallback_entries(graph):
+    pat = re.compile(r"(?i)^(handler|handle\w*|\w*controller\w*|\w*route\w*|\w*view|main|lambda_handler|do(get|post|put|delete))$")
+    n = 0
+    for f in graph["functions"]:
+        if f.get("path") and not f.get("external") and pat.match(f["name"]):
+            f["entry"] = True
+            n += 1
+    return n
+
+
+# ---------------------------------------------------------------- relate
+
+LOAD = r"""
+CREATE CONSTRAINT fn_id FOR (f:Function) REQUIRE f.id IS UNIQUE;
+CREATE INDEX fn_name FOR (f:Function) ON (f.name);
+UNWIND $g.functions AS f
+  MERGE (n:Function {id: f.id})
+  SET n.name = f.name, n.path = f.path, n.start_line = f.start_line,
+      n.end_line = f.end_line, n.external = coalesce(f.external, false);
+UNWIND $g.functions AS f MATCH (n:Function {id: f.id}) WHERE f.entry SET n:Entry;
+UNWIND $g.functions AS f MATCH (n:Function {id: f.id}) WHERE f.sanitizer SET n:Sanitizer;
+UNWIND $g.functions AS f MATCH (n:Function {id: f.id}) WHERE f.sink SET n:Sink;
+UNWIND $g.functions AS f MATCH (n:Function {id: f.id}) WHERE f.guard SET n:Guard;
+UNWIND $g.calls AS c
+  MATCH (a:Function {id: c.src}) MATCH (b:Function {id: c.dst})
+  MERGE (a)-[r:CALLS {line: c.line, path: c.path}]->(b)
+  SET r.taint = coalesce(r.taint, false) OR coalesce(c.taint, false);
+UNWIND $g.flows AS x
+  MERGE (fl:Flow {key: x.rule + "|" + x.source_path + "|" + toString(x.source_line) + "|" + x.path + "|" + toString(x.sink_line)})
+  SET fl.rule = x.rule, fl.severity = x.severity, fl.path = x.path, fl.source_path = x.source_path,
+      fl.source = x.source, fl.source_line = x.source_line, fl.sink = x.sink, fl.sink_line = x.sink_line
+  WITH fl, x
+  MATCH (s:Function {id: x.source_path + "::" + x.source_fn})
+  MATCH (k:Function {id: x.path + "::" + x.sink_fn})
+  MERGE (fl)-[:SOURCE_IN]->(s)
+  MERGE (fl)-[:SINK_IN]->(k);
+"""
+
+FACT_QUERIES = {
+    "fn": "MATCH (f:Function) RETURN f.id AS c0",
+    "call": "MATCH (a:Function)-[:CALLS]->(b:Function) RETURN a.id AS c0, b.id AS c1",
+    "entry": "MATCH (f:Entry) RETURN f.id AS c0",
+    "sanitizer": "MATCH (f:Sanitizer) RETURN f.id AS c0",
+    "sink": "MATCH (f:Sink) RETURN f.id AS c0",
+    "guard": "MATCH (f:Guard) RETURN f.id AS c0",
+    "flow": ("MATCH (fl:Flow)-[:SOURCE_IN]->(s:Function), (fl)-[:SINK_IN]->(k:Function) "
+             "RETURN fl.key AS c0, s.id AS c1, k.id AS c2"),
+}
+
+WRITEBACK = {
+    "exposed": "UNWIND $d.rows AS r MATCH (e:Function {id: r[0]}) MATCH (s:Function {id: r[1]}) MERGE (e)-[:EXPOSED_TO]->(s)",
+    "unchecked_sink": "UNWIND $d.rows AS r MATCH (e:Function {id: r[0]}) MATCH (s:Function {id: r[1]}) MERGE (e)-[:UNCHECKED_TO]->(s)",
+    "always_sanitized": "UNWIND $d.rows AS r MATCH (e:Function {id: r[0]}) MATCH (s:Function {id: r[1]}) MERGE (e)-[:ALWAYS_SANITIZED_TO]->(s)",
+    "dead": "UNWIND $d.rows AS r MATCH (f:Function {id: r[0]}) SET f:Dead",
+    "recursive": "UNWIND $d.rows AS r MATCH (f:Function {id: r[0]}) SET f:Recursive",
+    "flow_open": "UNWIND $d.rows AS r MATCH (fl:Flow {key: r[0]}) MATCH (e:Function {id: r[1]}) MERGE (fl)-[:OPEN_FROM]->(e)",
+    "flow_dead": "UNWIND $d.rows AS r MATCH (fl:Flow {key: r[0]}) SET fl:Unreachable",
+}
+
+
+def relate_query(db, cypher, *, params=None, fetch=None, read_only=False, timeout=300):
+    cmd = ["relate", "query", "--database", str(db), "--mode", "jsonl", "--max-rows", "0"]
+    if read_only:
+        cmd.append("--read-only")
+    for k, v in (params or {}).items():
+        cmd += ["--param", f"{k}={v}"]
+    for k, v in (fetch or {}).items():
+        cmd += ["--fetch-params", f"{k}={v}"]
+    cmd += ["-c", cypher]
+    proc = run(cmd, timeout)
+    rows = []
+    for line in proc.stdout.splitlines():
+        if line.startswith("{"):
+            obj = json.loads(line)
+            if "error" in obj or "rowCap" in obj:
+                raise RuntimeError(f"relate: {line[:300]}")
+            rows.append(obj)
+    if proc.returncode != 0:
+        raise RuntimeError(f"relate exited {proc.returncode}: {(proc.stderr or proc.stdout)[-300:]}")
+    return rows
+
+
+def export_facts(db, facts_dir: Path):
+    facts_dir.mkdir(parents=True, exist_ok=True)
+    counts = {}
+    for rel_name, q in FACT_QUERIES.items():
+        rows = {tuple(str(r[k]) for k in sorted(r, key=lambda c: int(c[1:])))
+                for r in relate_query(db, q, read_only=True)}
+        (facts_dir / f"{rel_name}.facts").write_text(
+            "".join("\t".join(t) + "\n" for t in sorted(rows)), encoding="utf-8")
+        counts[rel_name] = len(rows)
+    return counts
+
+
+def run_datalog(program: Path, facts: Path, out: Path, timeout=300):
+    out.mkdir(parents=True, exist_ok=True)
+    if shutil.which("souffle"):
+        proc = run(["souffle", "-F", str(facts), "-D", str(out), str(program)], timeout)
+        engine = "souffle"
+    else:
+        proc = run([sys.executable, "-I", str(HOME / "datalog_eval.py"), str(program), str(facts), str(out)], timeout)
+        engine = "datalog_eval.py"
+    if proc.returncode != 0:
+        raise RuntimeError(f"{engine} failed: {(proc.stderr or proc.stdout)[-300:]}")
+    return engine
+
+
+def read_csv(path: Path):
+    if not path.exists():
+        return []
+    return [row for row in csv.reader(open(path, encoding="utf-8"), delimiter="\t") if row]
+
+
+def derive_and_store(db, work: Path):
+    facts, out = work / "facts", work / "derived"
+    counts = export_facts(db, facts)
+    derived = {}
+    engine = None
+    for prog in ("reach.dl", "flows.dl"):
+        engine = run_datalog(RULES / prog, facts, out)
+    for rel_name, stmt in WRITEBACK.items():
+        rows = read_csv(out / f"{rel_name}.csv")
+        derived[rel_name] = len(rows)
+        if rows:
+            p = work / f"{rel_name}.json"
+            p.write_text(json.dumps({"rows": rows}), encoding="utf-8")
+            relate_query(db, stmt, fetch={"d": p})
+    return engine, counts, derived
+
+
+# ---------------------------------------------------------------- commands
+
+def write_status(out: Path, status: dict):
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "status.json").write_text(json.dumps(status, indent=1), encoding="utf-8")
+    print(json.dumps(status))
+
+
+def cmd_build(a):
+    t0 = time.time()
+    src, out = Path(a.source).resolve(), Path(a.out)
+    status = {"state": "skipped", "source": str(src), "db": None, "policy": a.policy}
+    prior = out / "status.json"
+    if a.reuse and prior.exists():  # resumed scan: the sandbox kept the earlier build
+        try:
+            old = json.loads(prior.read_text(encoding="utf-8"))
+            if old.get("state") != "ready" or Path(old.get("db") or "").exists():
+                print(json.dumps(old))
+                return
+        except ValueError:
+            pass
+    try:
+        files, loc, langs = survey(src)
+        status.update(files=files, loc=loc, languages=langs)
+        ok, reason = gate(a.policy, files, loc, a.min_files, a.min_loc)
+        status["reason"] = reason
+        if not ok:
+            return
+        if not shutil.which("opengrep") or not shutil.which("relate"):
+            status.update(state="failed", reason="opengrep or relate not installed in this image")
+            return
+        ver, major = opengrep_version()
+        status["opengrep"] = ver
+        if out.exists():
+            shutil.rmtree(out)
+        out.mkdir(parents=True)
+        work = Path(tempfile.mkdtemp(prefix="codegraph-", dir=out))
+        budget = a.timeout
+        cg, err = scan([RULES / "cg-rules.yaml", RULES / "entry-rules.yaml"], src, work / "cg.json",
+                       taint=False, major=major, timeout=budget)
+        if cg is None:
+            status.update(state="failed", reason=f"call-graph scan failed: {err}")
+            return
+        taint, warnings = None, []
+        rules_dir = Path(os.environ.get("OPENGREP_RULES", "/opt/opengrep-rules"))
+        if rules_dir.is_dir() and not a.no_taint:
+            remaining = max(60, budget - int(time.time() - t0))
+            taint, err = scan([rules_dir], src, work / "taint.json", taint=True, major=major, timeout=remaining)
+            if taint is None:
+                warnings.append(f"taint scan skipped: {err}")
+        graph, stats = build_graph(cg, taint, src)
+        if not graph["functions"]:
+            status.update(state="failed", reason="no functions extracted (unsupported layout?)")
+            return
+        if stats["entries_from_rules"] == 0:
+            stats["entries_from_name_heuristic"] = name_fallback_entries(graph)
+        if a.roles:
+            apply_roles_file(graph, a.roles)
+        (work / "graph.json").write_text(json.dumps(graph), encoding="utf-8")
+        db = out / "cg.rl"
+        relate_query(db, LOAD, fetch={"g": work / "graph.json"})
+        engine, fact_counts, derived = derive_and_store(db, work)
+        n_ext = sum(1 for f in graph["functions"] if f.get("external"))
+        # Library calls are expected to stay external; only calls whose name is defined in the
+        # repo but could not be tied to one definition (name collisions) weaken the graph.
+        ambiguous = stats["ambiguous_calls"] / max(1, stats["repo_named_call_sites"])
+        if ambiguous > 0.3:
+            warnings.append(f"{ambiguous:.0%} of in-repo call sites have ambiguous targets (name collisions): "
+                            "call-chain answers are incomplete, confirm in source")
+        status.update(state="ready", db=str(db), functions=len(graph["functions"]) - n_ext,
+                      external_callees=n_ext, calls=len(graph["calls"]), flows=len(graph["flows"]),
+                      ambiguous_call_ratio=round(ambiguous, 3), stats=stats, facts=fact_counts,
+                      derived=derived, datalog_engine=engine, warnings=warnings)
+        shutil.rmtree(work, ignore_errors=True)
+    except Exception as exc:  # never break the scan
+        status.update(state="failed", reason=f"{type(exc).__name__}: {exc}"[:400])
+    finally:
+        status["elapsed_s"] = round(time.time() - t0, 1)
+        write_status(out, status)
+
+
+def cmd_datalog(a):
+    work = Path(a.out)
+    facts = work / "facts"
+    export_facts(a.db, facts)
+    engine = run_datalog(Path(a.program), facts, work / "derived")
+    print(json.dumps({"engine": engine, "outputs": sorted(p.name for p in (work / "derived").glob("*.csv"))}))
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    b = sub.add_parser("build")
+    b.add_argument("--source", required=True)
+    b.add_argument("--out", required=True)
+    b.add_argument("--policy", choices=["auto", "on"], default="auto")
+    b.add_argument("--timeout", type=int, default=900, help="seconds for the scans")
+    b.add_argument("--min-files", type=int, help="auto-policy threshold (default 40)")
+    b.add_argument("--min-loc", type=int, help="auto-policy threshold (default 8000)")
+    b.add_argument("--reuse", action="store_true", help="reuse an earlier status.json in --out")
+    b.add_argument("--no-taint", action="store_true")
+    b.add_argument("--roles", help="JSON file of role regexes on function names")
+    d = sub.add_parser("datalog")
+    d.add_argument("--db", required=True)
+    d.add_argument("--program", required=True)
+    d.add_argument("--out", required=True)
+    a = ap.parse_args()
+    {"build": cmd_build, "datalog": cmd_datalog}[a.cmd](a)
+
+
+if __name__ == "__main__":
+    main()

@@ -27,7 +27,6 @@ Increase white-box coverage by combining source-aware triage with dynamic valida
 - `tree-sitter`: syntax-aware parsing support for symbol and route extraction
 - `gitleaks` + `trufflehog`: complementary secret detection (working tree and history coverage)
 - `trivy fs`: dependency, misconfiguration, license, and secret checks
-- relate + `souffle`: optional code graph from opengrep output for call-chain, reachability, and sanitizer-coverage queries (skills `building_code_call_graphs`, `analyzing_call_graphs_with_datalog`)
 
 Coverage target per repository:
 - one `opengrep` pass
@@ -39,7 +38,7 @@ Coverage target per repository:
 
 - Keep child agents specialized by vulnerability/component as usual.
 - For source-heavy subtasks, prefer creating child agents with `source_aware_sast` skill.
-- For structural questions (who calls X, which entry points reach this sink, is every path sanitized, dead code), create a child agent with `building_code_call_graphs` (build the opengrep call graph in a relate store and query it with Cypher). Add `analyzing_call_graphs_with_datalog` when the question needs fixpoint logic Cypher cannot express (sanitizer on every path, mutual recursion, unreachable code). Add `querying_relate_graphs` for CLI details. Cross-file taint needs Opengrep >= 2.0 `--enable-interfile` with rules that set `options: interfile: true`.
+- Strix builds a code graph itself when the sandbox starts, only for large mounted source and never in black-box runs (`STRIX_CODE_GRAPH`); when the scope block lists one, agents have the `querying_code_graph` skill. Do not ask child agents to build graphs. Send multi-hop reachability, missing-auth and sanitizer-coverage questions to it; keep single-file and one-hop questions on `rg`.
 - Graph results are triage leads: confirm in source and dynamically before reporting.
 - Use source findings to shape payloads and endpoint selection for dynamic testing.
 

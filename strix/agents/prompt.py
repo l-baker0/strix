@@ -28,6 +28,7 @@ def _resolve_skills(
     is_whitebox: bool = False,
     is_root: bool = False,
     is_diff_scoped: bool = False,
+    code_graph_ready: bool = False,
 ) -> list[str]:
     """Build the deduped, ordered skills list for the prompt render.
 
@@ -65,6 +66,9 @@ def _resolve_skills(
         ordered.append("custom/source_aware_sast")
         ordered.append("analysis/source_aware_discovery")
         ordered.append("analysis/fix_verification")
+        if code_graph_ready:
+            ordered.append("custom/querying_code_graph")
+            ordered.append("tooling/querying_relate_graphs")
 
     deduped: list[str] = []
     seen: set[str] = set()
@@ -106,6 +110,7 @@ def render_system_prompt(
             ),
         )
 
+        code_graph_ready = bool((system_prompt_context or {}).get("code_graph", {}).get("ready"))
         shared = {
             name.split("/")[-1]
             for name in _resolve_skills(
@@ -114,6 +119,7 @@ def render_system_prompt(
                 is_whitebox=is_whitebox,
                 is_root=is_root,
                 is_diff_scoped=is_diff_scoped,
+                code_graph_ready=code_graph_ready,
             )
         }
         skills_to_load = _resolve_skills(
@@ -122,6 +128,7 @@ def render_system_prompt(
             is_whitebox=is_whitebox,
             is_root=is_root,
             is_diff_scoped=is_diff_scoped,
+            code_graph_ready=code_graph_ready,
         )
         skill_content = load_skills(
             skills_to_load, supports_images=supports_images, coverage_tools=coverage_tools

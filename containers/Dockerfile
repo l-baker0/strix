@@ -239,7 +239,7 @@ RUN set -eux; \
     opengrep --version
 
 # relate (relatedb.ai): embedded Cypher graph database used by the
-# building_code_call_graphs / analyzing_call_graphs_with_datalog skills. The SHA-256 values come from
+# strix-codegraph and the querying_code_graph skill. The SHA-256 values come from
 # the release SHA256SUMS (verify its signature with relate's pinned key); bump
 # them together with RELATE_VERSION. Usage telemetry is off in the sandbox.
 ARG RELATE_VERSION=1.0.2
@@ -259,7 +259,7 @@ RUN set -eux; \
 ENV RELATE_TELEMETRY=0 \
     DO_NOT_TRACK=1
 
-# Souffle (Datalog) for the analyzing_call_graphs_with_datalog skill. Upstream publishes prebuilt
+# Souffle (Datalog) for strix-codegraph. Upstream publishes prebuilt
 # .deb files for x86_64 only, so aarch64 images omit it and the skill falls back
 # to its bundled Python evaluator. The package is unpacked rather than
 # dpkg-installed (its Depends names dev packages Kali may spell differently);
@@ -278,7 +278,7 @@ RUN set -eux; \
         rm -f /tmp/souffle.deb; \
         souffle --version; \
     else \
-        echo "souffle: no prebuilt package for $(uname -m); analyzing_call_graphs_with_datalog uses its Python fallback"; \
+        echo "souffle: no prebuilt package for $(uname -m); strix-codegraph uses its Python Datalog fallback"; \
     fi
 
 # Opengrep ships no rule registry of its own; bake the community ruleset so
@@ -300,6 +300,12 @@ RUN set -eux; \
 # Strix-authored rules that close gaps in the community ruleset.
 COPY containers/opengrep-rules/ /opt/opengrep-rules/strix/
 RUN chmod -R a+rX /opt/opengrep-rules/strix
+
+# strix-codegraph: builds the call graph (opengrep + relate + Datalog) for mounted source.
+# The Strix runner invokes it at sandbox start; agents only query the result.
+COPY containers/codegraph/ /opt/strix-codegraph/
+RUN chmod -R a+rX /opt/strix-codegraph && chmod a+rx /opt/strix-codegraph/strix-codegraph && \
+    ln -s /opt/strix-codegraph/strix-codegraph /usr/local/bin/strix-codegraph
 
 USER pentester
 

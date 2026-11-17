@@ -1,0 +1,95 @@
+rules:
+  - id: cg-def-javascript
+    languages: ['javascript']
+    severity: INFO
+    message: cg
+    pattern-either:
+      - pattern: 'function $F(...) {...}'
+      - pattern: '$F = function (...) {...}'
+      - pattern: '$F = (...) => {...}'
+      - pattern: 'const $F = (...) => {...}'
+      - pattern: 'const $F = function (...) {...}'
+      - pattern: 'class $C { $F(...) {...} }'
+      - pattern: 'async function $F(...) {...}'
+  - id: cg-call-javascript
+    languages: ['javascript']
+    severity: INFO
+    message: cg
+    pattern: '$F(...)'
+  - id: cg-method-javascript
+    languages: ['javascript']
+    severity: INFO
+    message: cg
+    pattern: '$O.$F(...)'
+  - id: cg-def-typescript
+    languages: ['typescript']
+    severity: INFO
+    message: cg
+    pattern-either:
+      - pattern: 'function $F(...) {...}'
+      - pattern: '$F = function (...) {...}'
+      - pattern: '$F = (...) => {...}'
+      - pattern: 'const $F = (...) => {...}'
+      - pattern: 'const $F = function (...) {...}'
+      - pattern: 'class $C { $F(...) {...} }'
+      - pattern: 'async function $F(...) {...}'
+  - id: cg-call-typescript
+    languages: ['typescript']
+    severity: INFO
+    message: cg
+    pattern: '$F(...)'
+  - id: cg-method-typescript
+    languages: ['typescript']
+    severity: INFO
+    message: cg
+    pattern: '$O.$F(...)'
+  - id: cg-def-go
+    languages: ['go']
+    severity: INFO
+    message: cg
+    pattern-either:
+      - pattern: 'func $F(...) {...}'
+      - pattern: 'func ($R $T) $F(...) {...}'
+      - pattern: 'func ($R *$T) $F(...) {...}'
+  - id: cg-call-go
+    languages: ['go']
+    severity: INFO
+    message: cg
+    pattern: '$F(...)'
+  - id: cg-method-go
+    languages: ['go']
+    severity: INFO
+    message: cg
+    pattern: '$O.$F(...)'
+  - id: cg-def-java
+    languages: ['java']
+    severity: INFO
+    message: cg
+    pattern: '$RET $F(...) {...}'
+  - id: cg-call-java
+    languages: ['java']
+    severity: INFO
+    message: cg
+    pattern: '$F(...)'
+  - id: cg-method-java
+    languages: ['java']
+    severity: INFO
+    message: cg
+    pattern: '$O.$F(...)'
+  - id: cg-def-python
+    languages: ['python']
+    severity: INFO
+    message: cg
+    pattern: |
+      def $F(...):
+          ...
+  - id: cg-call-python
+    languages: ['python']
+    severity: INFO
+    message: cg
+    pattern: '$F(...)'
+  - id: cg-method-python
+    languages: ['python']
+    severity: INFO
+    message: cg
+    pattern: '$O.$F(...)'

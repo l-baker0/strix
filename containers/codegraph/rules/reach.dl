@@ -1,0 +1,57 @@
+// Core reachability over the opengrep call graph. Runs under `souffle` or datalog_eval.py.
+.decl fn(f:symbol)            .input fn
+.decl call(a:symbol,b:symbol) .input call
+.decl entry(f:symbol)         .input entry
+.decl sanitizer(f:symbol)     .input sanitizer
+.decl sink(f:symbol)          .input sink
+.decl guard(f:symbol)         .input guard
+
+.decl reach(a:symbol,b:symbol)           // transitive closure, cycles are fine
+reach(A,B) :- call(A,B).
+reach(A,C) :- reach(A,B), call(B,C).
+
+.decl live(f:symbol)                      // reachable from any entry point
+live(F) :- entry(F).
+live(G) :- live(F), call(F,G).
+
+// Reachability that never passes THROUGH a sanitizer/guard node.
+.decl reach_clean(e:symbol,f:symbol)
+reach_clean(E,E) :- entry(E), !sanitizer(E).
+reach_clean(E,G) :- reach_clean(E,F), call(F,G), !sanitizer(G).
+
+// Sink reachable from an entry on at least one sanitizer-free path.
+.decl exposed(e:symbol,s:symbol)
+exposed(E,S) :- reach_clean(E,S), sink(S).
+.output exposed
+
+// Sink reachable from an entry, but EVERY path crosses a sanitizer: safe-by-construction.
+.decl always_sanitized(e:symbol,s:symbol)
+always_sanitized(E,S) :- entry(E), sink(S), reach(E,S), !exposed(E,S).
+.output always_sanitized
+
+// Dead code: defined but not reachable from any entry.
+.decl dead(f:symbol)
+dead(F) :- fn(F), !live(F), !entry(F).
+.output dead
+
+// Recursive functions / mutual recursion (SCC members).
+.decl recursive(f:symbol)
+recursive(F) :- reach(F,F).
+.output recursive
+
+// Sinks hit by an entry with an auth guard missing on the path: guard-avoiding reachability.
+.decl reach_unguarded(e:symbol,f:symbol)
+reach_unguarded(E,E) :- entry(E), !guard(E).
+reach_unguarded(E,G) :- reach_unguarded(E,F), call(F,G), !guard(G).
+.decl unguarded_sink(e:symbol,s:symbol)
+unguarded_sink(E,S) :- reach_unguarded(E,S), sink(S).
+.output unguarded_sink
+
+// Function-level auth check: an entry that directly calls a guard (e.g. verify_jwt(token)).
+// Approximation: the call graph has no control flow, so this cannot prove the guard
+// dominates the sink; it flags entries that never check at all.
+.decl checks_guard(e:symbol)
+checks_guard(E) :- entry(E), call(E,G), guard(G).
+.decl unchecked_sink(e:symbol,s:symbol)
+unchecked_sink(E,S) :- entry(E), !checks_guard(E), reach(E,S), sink(S).
+.output unchecked_sink

@@ -172,6 +172,21 @@ class RuntimeSettings(BaseSettings):
     max_context_images: int = Field(default=3, ge=0, alias="STRIX_MAX_CONTEXT_IMAGES")
 
 
+class CodeGraphSettings(BaseSettings):
+    """Whether mounted source is graph-backed: decided by Strix at sandbox start, not by agents."""
+
+    model_config = _BASE_CONFIG
+
+    # auto: build only when the tree is big enough to justify a graph; on: always (when
+    # source is mounted); off: never, and agents are told nothing about graphs (black-box).
+    mode: Literal["auto", "on", "off"] = Field(default="auto", alias="STRIX_CODE_GRAPH")
+    # Wall-clock budget for the scans that build the graph; the scan proceeds without it on timeout.
+    timeout_s: int = Field(default=900, ge=30, alias="STRIX_CODE_GRAPH_TIMEOUT")
+    # Provisional "worth a graph" thresholds for auto mode (uncalibrated; tune with benchmarks).
+    min_files: int = Field(default=40, ge=1, alias="STRIX_CODE_GRAPH_MIN_FILES")
+    min_loc: int = Field(default=8000, ge=1, alias="STRIX_CODE_GRAPH_MIN_LOC")
+
+
 class TelemetrySettings(BaseSettings):
     model_config = _BASE_CONFIG
 
@@ -232,6 +247,7 @@ class Settings(BaseSettings):
     llm: LlmSettings = Field(default_factory=LlmSettings)
     dedupe: DedupeSettings = Field(default_factory=DedupeSettings)
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
+    code_graph: CodeGraphSettings = Field(default_factory=CodeGraphSettings)
     context: ContextSettings = Field(default_factory=ContextSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     integrations: IntegrationSettings = Field(default_factory=IntegrationSettings)

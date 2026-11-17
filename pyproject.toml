@@ -157,6 +157,7 @@ disallow_untyped_decorators = false
 target-version = "py312"
 line-length = 100
 extend-exclude = [
+    "containers/codegraph",  # stdlib scripts baked into the sandbox image, not package code
     ".git",
     ".mypy_cache",
     ".ruff_cache",

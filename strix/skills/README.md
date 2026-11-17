@@ -41,8 +41,7 @@ The skills are dynamically injected into the agent's system prompt, allowing it 
 Notable source-aware skills:
 - `source_aware_whitebox` (coordination): white-box orchestration playbook
 - `source_aware_sast` (custom): opengrep/AST/secrets/supply-chain static triage workflow
-- `building_code_call_graphs` (custom): opengrep rules + taint traces -> call graph loaded into a relate graph database, with Cypher triage queries
-- `analyzing_call_graphs_with_datalog` (custom): Datalog (Souffle or bundled stdlib evaluator) over exported relate facts for sanitizer-coverage, dead-code, and recursion questions Cypher cannot express
+- `querying_code_graph` (custom): query the call graph Strix builds automatically for large mounted source (relate Cypher plus precomputed Datalog reachability); loaded only when the graph is ready
 - `dependency_cve_scanning` (custom): trivy-based SCA workflow for reporting known dependency CVEs via `create_dependency_report`
 - `npx_confusion` (custom): npx/npm exec/bunx fallback and adjacent package-runner identity confusion, with runner-specific registry and reporting gates
 - `semantic_confusion` (vulnerabilities): cross-boundary parser, normalization, and representation mismatch analysis

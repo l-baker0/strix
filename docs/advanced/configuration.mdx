@@ -198,6 +198,16 @@ When remote vars are set, Strix dual-writes telemetry to both local JSONL and th
   Runtime backend for the sandbox environment.
 </ParamField>
 
+## Code Graph
+
+<ParamField path="STRIX_CODE_GRAPH" default="auto" type="string">
+  Whether mounted source code is graph-backed. Strix decides this at sandbox start, per source tree, so agents never decide it. `auto` builds a call graph (opengrep + relate + Datalog) only when the tree is large enough to justify it (default: at least 40 supported source files and 8,000 lines; tune with `STRIX_CODE_GRAPH_MIN_FILES` and `STRIX_CODE_GRAPH_MIN_LOC`; these thresholds are provisional); `on` builds for every mounted source tree; `off` never builds one and tells agents nothing about graphs, which is the setting for black-box runs. URL-only scans never build a graph. A build failure or timeout never stops the scan; agents just work without the graph.
+</ParamField>
+
+<ParamField path="STRIX_CODE_GRAPH_TIMEOUT" default="900" type="integer">
+  Seconds allowed for the graph build. On timeout the scan continues without a graph.
+</ParamField>
+
 ## Sandbox Configuration
 
 <ParamField path="STRIX_SANDBOX_EXECUTION_TIMEOUT" default="120" type="integer">

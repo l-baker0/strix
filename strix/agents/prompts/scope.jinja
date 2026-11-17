@@ -15,6 +15,15 @@ AUTHORIZED TARGETS:
 {% endfor %}
 {% endif %}
 
+{% if system_prompt_context and system_prompt_context.code_graph and system_prompt_context.code_graph.ready %}
+CODE GRAPH (built by Strix when the sandbox started; read-only, name-based, may be incomplete):
+{% for graph in system_prompt_context.code_graph.graphs %}
+- {{ graph.source }}: {{ graph.db }} ({{ graph.functions }} functions, {{ graph.calls }} call edges, {{ graph.flows }} taint flows)
+{% endfor %}
+- Query it with the querying_code_graph skill. Treat results as leads and confirm in source.
+
+{% endif %}
+
 {% if system_prompt_context and system_prompt_context.mcp_available %}
 MCP CONNECTIONS (available this run):
 - The user connected one or more MCP (Model Context Protocol) servers. Their individual tools do NOT appear in your tool list. Use the four discovery and dispatch tools to reach them.

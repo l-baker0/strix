@@ -1,0 +1,31 @@
+rules:
+  - id: cg-entry-python-route
+    languages: [python]
+    severity: INFO
+    message: route handler
+    patterns:
+      - pattern-either:
+          - pattern: |
+              @$APP.$M(...)
+              def $F(...):
+                  ...
+          - pattern: |
+              @$APP.$M(...)
+              async def $F(...):
+                  ...
+      - metavariable-regex:
+          metavariable: $M
+          regex: ^(route|get|post|put|patch|delete|head|options|api_route|websocket|errorhandler|errorhandler_all|exception_handler|before_request|task)$
+  - id: cg-entry-java-mapping
+    languages: [java]
+    severity: INFO
+    message: route handler
+    patterns:
+      - pattern: |
+          @$ANN(...)
+          $RET $F(...) {
+            ...
+          }
+      - metavariable-regex:
+          metavariable: $ANN
+          regex: ^(Get|Post|Put|Patch|Delete|Request)Mapping$
